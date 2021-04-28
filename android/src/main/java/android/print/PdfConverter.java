@@ -16,6 +16,8 @@ import android.webkit.WebViewClient;
 import android.webkit.WebSettings;
 import java.io.File;
 import android.util.Base64;
+
+import java.io.FileDescriptor;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 
@@ -66,34 +68,47 @@ public class PdfConverter implements Runnable {
                     throw new RuntimeException("call requires API level 19");
                 else {
                     PrintDocumentAdapter documentAdapter = mWebView.createPrintDocumentAdapter();
+
                     documentAdapter.onLayout(null, getPdfPrintAttrs(), null, new PrintDocumentAdapter.LayoutResultCallback() {
-                    }, null);
-                    documentAdapter.onWrite(new PageRange[]{PageRange.ALL_PAGES}, getOutputFileDescriptor(), null, new PrintDocumentAdapter.WriteResultCallback() {
                         @Override
-                        public void onWriteFinished(PageRange[] pages) {
-                            try {
-                                String base64 = "";
-                                if (mShouldEncode) {
-                                    base64 = encodeFromFile(mPdfFile);
+                        public void onLayoutFinished(PrintDocumentInfo info, boolean changed) {
+                            PageRange[] pages = new PageRange[]{new PageRange(0, 10)};
+                            ParcelFileDescriptor fd = getOutputFileDescriptor();
+
+                            documentAdapter.onWrite(pages, fd, null, new PrintDocumentAdapter.WriteResultCallback() {
+                                @Override
+                                public void onWriteFinished(PageRange[] pages) {
+                                    try {
+                                        String base64 = "";
+                                        if (mShouldEncode) {
+                                            base64 = encodeFromFile(mPdfFile);
+                                        }
+
+                                        PDDocument myDocument = PDDocument.load(mPdfFile);
+                                        int pagesToBePrinted = myDocument.getNumberOfPages();
+
+                                        mResultMap.putString("filePath", mPdfFile.getAbsolutePath());
+                                        mResultMap.putString("numberOfPages", String.valueOf(pagesToBePrinted));
+                                        mResultMap.putString("base64", base64);
+                                        mPromise.resolve(mResultMap);
+                                    } catch (IOException e) {
+                                        mPromise.reject(e.getMessage());
+                                    } finally {
+                                        destroy();
+                                    }
                                 }
 
-                                PDDocument myDocument = PDDocument.load(mPdfFile);
-                                int pagesToBePrinted = myDocument.getNumberOfPages();
-
-                                mResultMap.putString("filePath", mPdfFile.getAbsolutePath());
-                                mResultMap.putString("numberOfPages", String.valueOf(pagesToBePrinted));
-                                mResultMap.putString("base64", base64);
-                                mPromise.resolve(mResultMap);
-                            } catch (IOException e) {
-                                mPromise.reject(e.getMessage());
-                            } finally {
-                                destroy();
-                            }
+                                @Override
+                                public void onWriteFailed(CharSequence error) {
+                                    mPromise.reject("error");
+                                }
+                            });
                         }
-                    });
+                    }, null);
                 }
             }
         });
+
         WebSettings settings = mWebView.getSettings();
         settings.setDefaultTextEncodingName("utf-8");
         mWebView.loadDataWithBaseURL(mBaseURL, mHtmlString, "text/HTML", "utf-8", null);
